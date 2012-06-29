@@ -438,4 +438,20 @@ static struct usb_driver stk1160_usb_driver = {
 	.disconnect = stk1160_disconnect,
 };
 
-module_usb_driver(stk1160_usb_driver);
+static int __init stk1160_module_init(void)
+{
+        int rc;
+
+        rc = usb_register(&stk1160_usb_driver);
+        if (rc)
+                printk(KERN_ERR "stk1160: usb_register failed rc=%d\n", rc);
+        return rc;
+}
+
+static void __exit stk1160_module_exit(void)
+{
+        usb_deregister(&stk1160_usb_driver);
+}
+
+module_init(stk1160_module_init);
+module_exit(stk1160_module_exit);
