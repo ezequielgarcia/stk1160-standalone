@@ -25,9 +25,8 @@ Building and installing
 -----------------------
 
     make
-    make install
     
-It may be possible that 'make install' doesn't work. In that case you can simply insmod the module manually.
+After this, you can simply insmod the module manually.
 
     insmod stk1160.ko
 
