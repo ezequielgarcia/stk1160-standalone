@@ -25,8 +25,11 @@ Building and installing
 -----------------------
 
     make
-    make install
 
+After this you can simply insmod the module manually
+
+    insmod stk1160.ko
+    
 Piece of cake, uh?
 
 Usage
