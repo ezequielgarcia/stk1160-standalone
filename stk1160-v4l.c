@@ -261,7 +261,6 @@ static ssize_t stk1160_read(struct file *file,
 	struct stk1160 *dev = video_drvdata(file);
 	int rc;
 
-	mutex_lock(&dev->v4l_lock);
 	/*
 	 * Read operation is emulated by videobuf2.
 	 * When vb2 calls reqbufs it acquires ownership of queue.
@@ -271,7 +270,6 @@ static ssize_t stk1160_read(struct file *file,
 	rc = vb2_read(&dev->vb_vidq, data, count, ppos,
 			file->f_flags & O_NONBLOCK);
 
-	mutex_unlock(&dev->v4l_lock);
 	return rc;
 }
 
@@ -281,9 +279,7 @@ stk1160_poll(struct file *file, struct poll_table_struct *wait)
 	struct stk1160 *dev = video_drvdata(file);
 	int rc;
 
-	mutex_lock(&dev->v4l_lock);
 	rc = vb2_poll(&dev->vb_vidq, file, wait);
-	mutex_unlock(&dev->v4l_lock);
 
 	return rc;
 }
@@ -292,7 +288,6 @@ static int stk1160_close(struct file *file)
 {
 	struct stk1160 *dev = video_drvdata(file);
 
-	mutex_lock(&dev->v4l_lock);
 	/*
 	 * If this is the owner handle we stop
 	 * streaming to free/dequeue all buffers.
@@ -302,7 +297,6 @@ static int stk1160_close(struct file *file)
 		vb2_queue_release(&dev->vb_vidq);
 		stk1160_drop_owner(dev);
 	}
-	mutex_unlock(&dev->v4l_lock);
 
 	return v4l2_fh_release(file);
 }
@@ -315,9 +309,7 @@ static int stk1160_mmap(struct file *file, struct vm_area_struct *vma)
 	stk1160_dbg("vma=0x%08lx\n", (unsigned long)vma);
 
 	/* TODO: Lock or trylock? */
-	mutex_lock(&dev->v4l_lock);
 	rc = vb2_mmap(&dev->vb_vidq, vma);
-	mutex_unlock(&dev->v4l_lock);
 
 	stk1160_dbg("vma start=0x%08lx, size=%ld (%d)\n",
 		(unsigned long)vma->vm_start,
@@ -896,7 +888,7 @@ int stk1160_video_register(struct stk1160 *dev)
 
 	/*
 	 * Provide a mutex to v4l2 core.
-	 * It will be used to protect *only* v4l2 ioctls.
+	 * In kernel 3.2 it will be used to protect *every* v4l2 ioctls.
 	 */
 	dev->vdev.lock = &dev->v4l_lock;
 
