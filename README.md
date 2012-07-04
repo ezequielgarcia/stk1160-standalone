@@ -19,18 +19,17 @@ you don't have to insert them manually:
 - saa7115
 - videodev
 - videobuf2\_core
+- videobuf2\_vmalloc
+- videobuf2\_memops
 - v4l2\_common
 
 Building and installing
 -----------------------
 
     make
-
-After this you can simply insmod the module manually
-
-    insmod stk1160.ko
+    make install
     
-Piece of cake, uh?
+After this, perhaps you will have to run 'depmod -a'.
 
 Usage
 -----
@@ -53,3 +52,16 @@ the 'Line' item on the capture menu for stk1160-mixer device.
 This stk1160-mixer device is needed because snd-usb-audio
 doesn't show mixer controls for the ac97 codec chip.
 The real usb transfer for audio capture is done through snd-usb-audio.
+
+Preventing old easycap driver from loading
+------------------------------------------
+
+If you want to prevent some module from loading
+you can do so by adding it to blacklist file.
+
+On many distributions this can be done like this:
+
+    echo "blacklist easycap" >> /etc/modprobe.d/blacklist.conf
+
+This way easycap won't be loaded automatically by udev;
+you can still load it manually, of course.
