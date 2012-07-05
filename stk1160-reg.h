@@ -24,7 +24,7 @@
 #define STK1160_GCTRL			0x000
 
 /* Remote Wakup Control */
-#define STK1160_RMCTL			0x00C
+#define STK1160_RMCTL			0x00c
 
 /*
  * Decoder Control Register:
@@ -63,13 +63,13 @@
 #define STK1160_SBUSR_RD		0x209
 
 /* Alternate Serial Inteface Control */
-#define STK1160_ASIC			0x2FC
+#define STK1160_ASIC			0x2fc
 
 /* PLL Select Options */
 #define STK1160_PLLSO			0x018
 
 /* PLL Frequency Divider */
-#define STK1160_PLLFD			0x01C
+#define STK1160_PLLFD			0x01c
 
 /* Timing Generator */
 #define STK1160_TIGEN			0x300

@@ -43,6 +43,10 @@ static unsigned int vidioc_debug;
 module_param(vidioc_debug, int, 0644);
 MODULE_PARM_DESC(vidioc_debug, "enable debug messages [vidioc]");
 
+static bool keep_buffers;
+module_param(keep_buffers, bool, 0644);
+MODULE_PARM_DESC(keep_buffers, "don't release buffers upon stop streaming");
+
 /* supported video standards */
 static struct stk1160_fmt format[] = {
 	{
@@ -109,10 +113,15 @@ static void stk1160_set_std(struct stk1160 *dev)
 
 }
 
-static int stk1160_set_alternate(struct stk1160 *dev)
+/*
+ * Set a new alternate setting.
+ * Returns true is dev->max_pkt_size has changed, false otherwise.
+ */
+static bool stk1160_set_alternate(struct stk1160 *dev)
 {
 	int i, prev_alt = dev->alt;
 	unsigned int min_pkt_size;
+	bool new_pkt_size;
 
 	/*
 	 * If we don't set right alternate,
@@ -134,17 +143,20 @@ static int stk1160_set_alternate(struct stk1160 *dev)
 			dev->alt = i;
 	}
 
-	stk1160_dbg("setting alternate %d\n", dev->alt);
+	stk1160_info("setting alternate %d\n", dev->alt);
 
 	if (dev->alt != prev_alt) {
 		stk1160_dbg("minimum isoc packet size: %u (alt=%d)\n",
 				min_pkt_size, dev->alt);
-		dev->max_pkt_size = dev->alt_max_pkt_size[dev->alt];
 		stk1160_dbg("setting alt %d with wMaxPacketSize=%u\n",
-			       dev->alt, dev->max_pkt_size);
+			       dev->alt, dev->alt_max_pkt_size[dev->alt]);
 		usb_set_interface(dev->udev, 0, dev->alt);
 	}
-	return 0;
+
+	new_pkt_size = dev->max_pkt_size != dev->alt_max_pkt_size[dev->alt];
+	dev->max_pkt_size = dev->alt_max_pkt_size[dev->alt];
+
+	return new_pkt_size;
 }
 
 static bool stk1160_acquire_owner(struct stk1160 *dev, struct file *file)
@@ -172,6 +184,7 @@ static bool stk1160_is_owner(struct stk1160 *dev, struct file *file)
 static int stk1160_start_streaming(struct stk1160 *dev)
 {
 	int i, rc;
+	bool new_pkt_size;
 
 	/* Check device presence */
 	if (!dev->udev)
@@ -182,13 +195,15 @@ static int stk1160_start_streaming(struct stk1160 *dev)
 	 * and only *then* initialize isoc urbs.
 	 * Someone please explain me why ;)
 	 */
-	rc = stk1160_set_alternate(dev);
-	if (rc < 0)
-		return rc;
+	new_pkt_size = stk1160_set_alternate(dev);
 
-	/* If we haven't allocated any isoc urbs */
-	if (!dev->isoc_ctl.num_bufs) {
-		rc = stk1160_init_isoc(dev);
+	/*
+	 * We (re)allocate isoc urbs if:
+	 * there is no allocated isoc urbs, OR
+	 * a new dev->max_pkt_size is detected
+	 */
+	if (!dev->isoc_ctl.num_bufs || new_pkt_size) {
+		rc = stk1160_alloc_isoc(dev);
 		if (rc < 0)
 			return rc;
 	}
@@ -220,7 +235,14 @@ int stk1160_stop_streaming(struct stk1160 *dev, bool connected)
 	struct stk1160_buffer *buf;
 	unsigned long flags = 0;
 
-	stk1160_uninit_isoc(dev);
+	stk1160_cancel_isoc(dev);
+
+	/*
+	 * It is possible to keep buffers around using a module parameter.
+	 * This is intended to avoid memory fragmentation.
+	 */
+	if (!keep_buffers)
+		stk1160_free_isoc(dev);
 
 	/* If the device is physically plugged */
 	if (connected && dev->udev) {
@@ -248,6 +270,8 @@ int stk1160_stop_streaming(struct stk1160 *dev, bool connected)
 		stk1160_info("buffer [%p/%d] aborted\n",
 				buf, buf->vb.v4l2_buf.index);
 	}
+	/* It's important to clear current buffer */
+	dev->isoc_ctl.buf = NULL;
 	spin_unlock_irqrestore(&dev->buf_lock, flags);
 
 	stk1160_dbg("streaming stopped\n");
@@ -356,66 +380,51 @@ static int vidioc_reqbufs(struct file *file, void *priv,
 static int vidioc_querybuf(struct file *file, void *priv, struct v4l2_buffer *p)
 {
 	struct stk1160 *dev = video_drvdata(file);
-	int rc;
 
 	if (!stk1160_is_owner(dev, file))
 		return -EBUSY;
 
-	rc = vb2_querybuf(&dev->vb_vidq, p);
-
-	return rc;
+	return vb2_querybuf(&dev->vb_vidq, p);
 }
 
 static int vidioc_qbuf(struct file *file, void *priv, struct v4l2_buffer *p)
 {
 	struct stk1160 *dev = video_drvdata(file);
-	int rc;
 
 	if (!stk1160_is_owner(dev, file))
 		return -EBUSY;
 
-	rc = vb2_qbuf(&dev->vb_vidq, p);
-
-	return rc;
+	return vb2_qbuf(&dev->vb_vidq, p);
 }
 
 static int vidioc_dqbuf(struct file *file, void *priv, struct v4l2_buffer *p)
 {
 	struct stk1160 *dev = video_drvdata(file);
-	int rc;
 
 	if (!stk1160_is_owner(dev, file))
 		return -EBUSY;
 
-	rc = vb2_dqbuf(&dev->vb_vidq, p, file->f_flags & O_NONBLOCK);
-
-	return rc;
+	return vb2_dqbuf(&dev->vb_vidq, p, file->f_flags & O_NONBLOCK);
 }
 
 static int vidioc_streamon(struct file *file, void *priv, enum v4l2_buf_type i)
 {
 	struct stk1160 *dev = video_drvdata(file);
-	int rc;
 
 	if (!stk1160_is_owner(dev, file))
 		return -EBUSY;
 
-	rc = vb2_streamon(&dev->vb_vidq, i);
-
-	return rc;
+	return vb2_streamon(&dev->vb_vidq, i);
 }
 
 static int vidioc_streamoff(struct file *file, void *priv, enum v4l2_buf_type i)
 {
 	struct stk1160 *dev = video_drvdata(file);
-	int rc;
 
 	if (!stk1160_is_owner(dev, file))
 		return -EBUSY;
 
-	rc =  vb2_streamoff(&dev->vb_vidq, i);
-
-	return rc;
+	return vb2_streamoff(&dev->vb_vidq, i);
 }
 
 /*
@@ -602,20 +611,7 @@ static int vidioc_s_input(struct file *file, void *priv, unsigned int i)
 
 	dev->ctl_input = i;
 
-	switch (dev->ctl_input) {
-	case 0:
-		stk1160_write_reg(dev, STK1160_GCTRL, 0x98);
-		break;
-	case 1:
-		stk1160_write_reg(dev, STK1160_GCTRL, 0x90);
-		break;
-	case 2:
-		stk1160_write_reg(dev, STK1160_GCTRL, 0x88);
-		break;
-	case 3:
-		stk1160_write_reg(dev, STK1160_GCTRL, 0x80);
-		break;
-	}
+	stk1160_select_input(dev);
 
 	return 0;
 }
@@ -770,7 +766,7 @@ static int queue_setup(struct vb2_queue *vq, const struct v4l2_format *v4l_fmt,
 
 static void buffer_queue(struct vb2_buffer *vb)
 {
-	unsigned long flags = 0;
+	unsigned long flags;
 	struct stk1160 *dev = vb2_get_drv_priv(vb->vb2_queue);
 	struct stk1160_buffer *buf =
 		container_of(vb, struct stk1160_buffer, vb);
@@ -790,10 +786,10 @@ static void buffer_queue(struct vb2_buffer *vb)
 		buf->pos = 0;
 
 		/*
-		 * If buffer length is different from expected then we return
+		 * If buffer length is less from expected then we return
 		 * the buffer to userspace directly.
 		 */
-		if (buf->length != dev->width * dev->height * 2)
+		if (buf->length < dev->width * dev->height * 2)
 			vb2_buffer_done(&buf->vb, VB2_BUF_STATE_ERROR);
 		else
 			list_add_tail(&buf->list, &dev->avail_bufs);
@@ -805,22 +801,14 @@ static void buffer_queue(struct vb2_buffer *vb)
 static int start_streaming(struct vb2_queue *vq, unsigned int count)
 {
 	struct stk1160 *dev = vb2_get_drv_priv(vq);
-	int rc;
-
-	rc = stk1160_start_streaming(dev);
-
-	return rc;
+	return stk1160_start_streaming(dev);
 }
 
 /* abort streaming and wait for last buffer */
 static int stop_streaming(struct vb2_queue *vq)
 {
 	struct stk1160 *dev = vb2_get_drv_priv(vq);
-	int rc;
-
-	rc = stk1160_stop_streaming(dev, true);
-
-	return rc;
+	return stk1160_stop_streaming(dev, true);
 }
 
 static void stk1160_lock(struct vb2_queue *vq)

@@ -48,13 +48,15 @@
 
 #define STK1160_MAX_INPUT 3
 
+#define STK1160_I2C_TIMEOUT 100
+
 /* TODO: Print helpers
  * I could use dev_xxx, pr_xxx, v4l2_xxx or printk.
  * However, there isn't a solid consensus on which
  * new drivers should use.
  *
  */
-/*#define DEBUG*/
+#define DEBUG
 #ifdef DEBUG
 #define stk1160_dbg(fmt, args...) \
 	printk(KERN_DEBUG "stk1160: " fmt,  ## args)
@@ -170,26 +172,29 @@ struct regval {
 };
 
 /* Provided by stk1160-v4l.c */
-int stk1160_vb2_setup(struct stk1160 *cap);
-int stk1160_video_register(struct stk1160 *cap);
-void stk1160_video_unregister(struct stk1160 *cap);
-int stk1160_stop_streaming(struct stk1160 *cap, bool connected);
+int stk1160_vb2_setup(struct stk1160 *dev);
+int stk1160_video_register(struct stk1160 *dev);
+void stk1160_video_unregister(struct stk1160 *dev);
+int stk1160_stop_streaming(struct stk1160 *dev, bool connected);
 
 /* Provided by stk1160-video.c */
-void stk1160_uninit_isoc(struct stk1160 *cap);
-int stk1160_init_isoc(struct stk1160 *cap);
+int stk1160_alloc_isoc(struct stk1160 *dev);
+void stk1160_free_isoc(struct stk1160 *dev);
+void stk1160_cancel_isoc(struct stk1160 *dev);
+void stk1160_uninit_isoc(struct stk1160 *dev);
 
 /* Provided by stk1160-i2c.c */
-int stk1160_i2c_register(struct stk1160 *cap);
-int stk1160_i2c_unregister(struct stk1160 *cap);
+int stk1160_i2c_register(struct stk1160 *dev);
+int stk1160_i2c_unregister(struct stk1160 *dev);
 
 /* Provided by stk1160-core.c */
-int stk1160_read_reg(struct stk1160 *cap, u16 reg, u8 *value);
-int stk1160_write_reg(struct stk1160 *cap, u16 reg, u16 value);
+int stk1160_read_reg(struct stk1160 *dev, u16 reg, u8 *value);
+int stk1160_write_reg(struct stk1160 *dev, u16 reg, u16 value);
 int stk1160_write_regs_req(struct stk1160 *dev, u8 req, u16 reg,
 		char *buf, int len);
 int stk1160_read_reg_req_len(struct stk1160 *dev, u8 req, u16 reg,
 		char *buf, int len);
+void stk1160_select_input(struct stk1160 *dev);
 
 /* Provided by stk1160-ac97.c */
 int stk1160_ac97_register(struct stk1160 *dev);

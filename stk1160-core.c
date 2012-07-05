@@ -68,16 +68,12 @@ static unsigned short saa7113_addrs[] = {
 int stk1160_read_reg(struct stk1160 *dev, u16 reg, u8 *value)
 {
 	int ret;
+	int pipe = usb_rcvctrlpipe(dev->udev, 0);
 
 	*value = 0;
-	ret = usb_control_msg(dev->udev, usb_rcvctrlpipe(dev->udev, 0),
-			0x00,
+	ret = usb_control_msg(dev->udev, pipe, 0x00,
 			USB_DIR_IN | USB_TYPE_VENDOR | USB_RECIP_DEVICE,
-			0x00,
-			reg,
-			value,
-			sizeof(u8),
-			HZ);
+			0x00, reg, value, sizeof(u8), HZ);
 	if (ret < 0) {
 		stk1160_err("read failed on reg 0x%x (%d)\n",
 			reg, ret);
@@ -90,15 +86,11 @@ int stk1160_read_reg(struct stk1160 *dev, u16 reg, u8 *value)
 int stk1160_write_reg(struct stk1160 *dev, u16 reg, u16 value)
 {
 	int ret;
+	int pipe = usb_sndctrlpipe(dev->udev, 0);
 
-	ret =  usb_control_msg(dev->udev, usb_sndctrlpipe(dev->udev, 0),
-			0x01,
+	ret =  usb_control_msg(dev->udev, pipe, 0x01,
 			USB_DIR_OUT | USB_TYPE_VENDOR | USB_RECIP_DEVICE,
-			value,
-			reg,
-			NULL,
-			0,
-			HZ);
+			value, reg, NULL, 0, HZ);
 	if (ret < 0) {
 		stk1160_err("write failed on reg 0x%x (%d)\n",
 			reg, ret);
@@ -108,12 +100,22 @@ int stk1160_write_reg(struct stk1160 *dev, u16 reg, u16 value)
 	return 0;
 }
 
+void stk1160_select_input(struct stk1160 *dev)
+{
+	static const u8 gctrl[] = {
+		0x98, 0x90, 0x88, 0x80
+	};
+
+	if (dev->ctl_input < ARRAY_SIZE(gctrl))
+		stk1160_write_reg(dev, STK1160_GCTRL, gctrl[dev->ctl_input]);
+}
+
 /* TODO: We should break this into pieces */
 static void stk1160_reg_reset(struct stk1160 *dev)
 {
 	int i;
 
-	static struct regval ctl[] = {
+	static const struct regval ctl[] = {
 		{STK1160_GCTRL+2, 0x0078},
 
 		{STK1160_RMCTL+1, 0x0000},
@@ -139,22 +141,6 @@ static void stk1160_reg_reset(struct stk1160 *dev)
 
 	for (i = 0; ctl[i].reg != 0xffff; i++)
 		stk1160_write_reg(dev, ctl[i].reg, ctl[i].val);
-
-	/* Set selected input from module parameter */
-	switch (dev->ctl_input) {
-	case 0:
-		stk1160_write_reg(dev, STK1160_GCTRL, 0x98);
-		break;
-	case 1:
-		stk1160_write_reg(dev, STK1160_GCTRL, 0x90);
-		break;
-	case 2:
-		stk1160_write_reg(dev, STK1160_GCTRL, 0x88);
-		break;
-	case 3:
-		stk1160_write_reg(dev, STK1160_GCTRL, 0x80);
-		break;
-	}
 }
 
 static void stk1160_release(struct v4l2_device *v4l2_dev)
@@ -377,6 +363,9 @@ static int stk1160_probe(struct usb_interface *interface,
 	/* reset stk1160 to default values */
 	stk1160_reg_reset(dev);
 
+	/* select default input */
+	stk1160_select_input(dev);
+
 	rc = stk1160_video_register(dev);
 	if (rc < 0)
 		goto unreg_i2c;
@@ -411,6 +400,9 @@ static void stk1160_disconnect(struct usb_interface *interface)
 	 * then deallocate resources
 	 */
 	mutex_lock(&dev->v4l_lock);
+
+	/* Here is the only place where isoc get released */
+	stk1160_uninit_isoc(dev);
 
 	/* ac97 unregister needs to be done before usb_device is cleared */
 	stk1160_ac97_unregister(dev);
