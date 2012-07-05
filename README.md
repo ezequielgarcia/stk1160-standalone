@@ -1,7 +1,7 @@
 stk1160-standalone
 ==================
 
-stk1160 release 0.9.3\_for\_v3.2
+stk1160 release 0.9.4\_for\_v3.2
 
 This driver is specially made for you: the user;
 so anything you think it's not clear enough, please open an github issue.
