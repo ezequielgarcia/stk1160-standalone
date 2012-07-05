@@ -53,6 +53,23 @@ This stk1160-mixer device is needed because snd-usb-audio
 doesn't show mixer controls for the ac97 codec chip.
 The real usb transfer for audio capture is done through snd-usb-audio.
 
+Controlling allocation mechanism
+--------------------------------
+
+There is an option (keep\_buffers) you can pass to the driver that allows some
+control over buffer memory allocation.
+
+If keep\_buffers=0, the driver will allocate buffers when he starts streaming and
+will release them when he stops streaming. This is the default. 
+
+    modprobe stk1160
+
+But if keep\_buffers=1, the driver will try to keep buffers and will not release
+them unless he absolutely need to: when some other parameter changes or when
+you remove the driver or unplug the device.
+
+    modprobe stk1160 keep_buffers=1
+
 Preventing old easycap driver from loading
 ------------------------------------------
 
