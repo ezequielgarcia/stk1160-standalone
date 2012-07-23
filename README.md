@@ -6,6 +6,10 @@ stk1160 release 0.9.3\_for\_v3.2
 This driver is specially made for you: the user;
 so anything you think it's not clear enough, please open an github issue.
 
+This branch is intented to be used with v3.2; 
+__Please don't even try to use it with another one__,
+or if you do and it doesn't work, don't mail me or open an issue.
+
 This is the stk1160 driver (formerly known as easycap driver).
 It's the driver needed to capture audio and video in some of those
 little devices named as Easycap (if they are based on stk1160 chip).
@@ -30,6 +34,9 @@ Building and installing
     make install
     
 After this, perhaps you will have to run 'depmod -a'.
+
+You should *not* get any warning. 
+If you do, most probably you did something wrong or you're using an incompatible kernel.
 
 Usage
 -----
