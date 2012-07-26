@@ -545,6 +545,9 @@ static int vidioc_s_std(struct file *file, void *priv, v4l2_std_id *norm)
 	if (!dev->udev)
 		return -ENODEV;
 
+	/* We need to set this now, before we call stk1160_set_std */
+	dev->norm = *norm;
+
 	/* This is taken from saa7115 video decoder */
 	if (dev->norm & V4L2_STD_525_60) {
 		dev->width = 720;
@@ -556,9 +559,6 @@ static int vidioc_s_std(struct file *file, void *priv, v4l2_std_id *norm)
 		stk1160_err("invalid standard\n");
 		return -EINVAL;
 	}
-
-	/* We need to set this now, before we call stk1160_set_std */
-	dev->norm = *norm;
 
 	stk1160_set_std(dev);
 
