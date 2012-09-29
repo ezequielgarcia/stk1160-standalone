@@ -45,6 +45,10 @@ static unsigned int input;
 module_param(input, int, 0644);
 MODULE_PARM_DESC(input, "Set default input");
 
+static unsigned int svideo_input;
+module_param(svideo_input, int, 0644);
+MODULE_PARM_DESC(svideo_input, "Set svideo_input [debug only]");
+
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Ezequiel Garcia");
 MODULE_DESCRIPTION("STK1160 driver");
@@ -391,10 +395,10 @@ static int stk1160_probe(struct usb_interface *interface,
 	 * #define SAA7115_SVIDEO2    8
 	 * #define SAA7115_SVIDEO3    9
 	 * 
-	 * I've got reasons to believe it's _SVIDEO3
+	 * I've got reasons to believe it's _SVIDEO3 (svideo_input=9)
 	 */
 	v4l2_device_call_all(&dev->v4l2_dev, 0, video, s_routing,
-				SAA7115_SVIDEO3, 0, 0);
+				svideo_input, 0, 0);
 	v4l2_device_call_all(&dev->v4l2_dev, 0, video, s_stream, 0);
 
 	/* reset stk1160 to default values */
