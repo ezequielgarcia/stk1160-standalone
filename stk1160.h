@@ -46,7 +46,7 @@
 
 #define STK1160_MIN_PKT_SIZE 3072
 
-#define STK1160_MAX_INPUT 3
+#define STK1160_MAX_INPUT 4
 
 /* TODO: Print helpers
  * I could use dev_xxx, pr_xxx, v4l2_xxx or printk.

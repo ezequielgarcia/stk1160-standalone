@@ -43,6 +43,10 @@ static unsigned int vidioc_debug;
 module_param(vidioc_debug, int, 0644);
 MODULE_PARM_DESC(vidioc_debug, "enable debug messages [vidioc]");
 
+static unsigned int svideo_input;
+module_param(svideo_input, int, 0644);
+MODULE_PARM_DESC(svideo_input, "Set svideo_input [debug only]");
+
 /* supported video standards */
 static struct stk1160_fmt format[] = {
 	{
@@ -577,7 +581,12 @@ static int vidioc_enum_input(struct file *file, void *priv,
 	if (i->index > STK1160_MAX_INPUT)
 		return -EINVAL;
 
-	sprintf(i->name, "Composite%d", i->index);
+	/* S-Video special handling */
+	if (i->index == 4)
+		sprintf(i->name, "S-Video");
+	else
+		sprintf(i->name, "Composite%d", i->index);
+
 	i->type = V4L2_INPUT_TYPE_CAMERA;
 	i->std = dev->vdev.tvnorms;
 	return 0;
@@ -602,18 +611,49 @@ static int vidioc_s_input(struct file *file, void *priv, unsigned int i)
 
 	dev->ctl_input = i;
 
+	/*
+	 * saa7115 is the in charge of video decoding.
+	 * In order to switch input from Composite to S-Video,
+	 * it's necessary to call s_routing with appropriate input
+	 * index.
+	 * For composite, use SAA7115_COMPOSITE0 (defined as zero).
+	 * However, I'm not sure which of these is the correct one
+	 * for S-Video: (these are defined at saa7155.h)
+	 *
+	 * #define SAA7115_COMPOSITE0 0
+	 * #define SAA7115_COMPOSITE1 1
+	 * #define SAA7115_COMPOSITE2 2
+	 * #define SAA7115_COMPOSITE3 3
+	 * #define SAA7115_COMPOSITE4 4
+	 * #define SAA7115_COMPOSITE5 5
+	 * #define SAA7115_SVIDEO0    6
+	 * #define SAA7115_SVIDEO1    7
+	 * #define SAA7115_SVIDEO2    8
+	 * #define SAA7115_SVIDEO3    9
+	 *
+	 * Andrew Schalk reported it's COMPOSITE1 (svideo_input=1)
+	 */
 	switch (dev->ctl_input) {
 	case 0:
 		stk1160_write_reg(dev, STK1160_GCTRL, 0x98);
+		v4l2_device_call_all(&dev->v4l2_dev, 0, video, s_routing,
+				0, 0, 0);
 		break;
 	case 1:
 		stk1160_write_reg(dev, STK1160_GCTRL, 0x90);
+		v4l2_device_call_all(&dev->v4l2_dev, 0, video, s_routing,
+				0, 0, 0);
 		break;
 	case 2:
 		stk1160_write_reg(dev, STK1160_GCTRL, 0x88);
+		v4l2_device_call_all(&dev->v4l2_dev, 0, video, s_routing,
+				0, 0, 0);
 		break;
 	case 3:
-		stk1160_write_reg(dev, STK1160_GCTRL, 0x80);
+		stk1160_write_reg(dev, STK1160_GCTRL, 0x98);
+		v4l2_device_call_all(&dev->v4l2_dev, 0, video, s_routing,
+				svideo_input, 0, 0);
+	case 4:
 		break;
 	}
 

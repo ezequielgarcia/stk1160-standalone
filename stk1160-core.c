@@ -45,10 +45,6 @@ static unsigned int input;
 module_param(input, int, 0644);
 MODULE_PARM_DESC(input, "Set default input");
 
-static unsigned int svideo_input;
-module_param(svideo_input, int, 0644);
-MODULE_PARM_DESC(svideo_input, "Set svideo_input [debug only]");
-
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Ezequiel Garcia");
 MODULE_DESCRIPTION("STK1160 driver");
@@ -375,30 +371,8 @@ static int stk1160_probe(struct usb_interface *interface,
 	/* i2c reset saa711x */
 	v4l2_device_call_all(&dev->v4l2_dev, 0, core, reset, 0);
 
-	/*
-	 * saa7115 is the in charge of video decoding. 
-	 * In order to switch input from Composite to S-Video,
-	 * it's necessary to call s_routing with appropriate input
-	 * index.
-	 * For composite, use SAA7115_COMPOSITE0 (defined as zero).
-	 * However, I'm not sure which of these is the correct one
-	 * for S-Video: (these are defined at saa7155.h)
-	 *
-	 * #define SAA7115_COMPOSITE0 0
-	 * #define SAA7115_COMPOSITE1 1
-	 * #define SAA7115_COMPOSITE2 2
-	 * #define SAA7115_COMPOSITE3 3
-	 * #define SAA7115_COMPOSITE4 4
-	 * #define SAA7115_COMPOSITE5 5
-	 * #define SAA7115_SVIDEO0    6
-	 * #define SAA7115_SVIDEO1    7
-	 * #define SAA7115_SVIDEO2    8
-	 * #define SAA7115_SVIDEO3    9
-	 * 
-	 * I've got reasons to believe it's _SVIDEO3 (svideo_input=9)
-	 */
 	v4l2_device_call_all(&dev->v4l2_dev, 0, video, s_routing,
-				svideo_input, 0, 0);
+				0, 0, 0);
 	v4l2_device_call_all(&dev->v4l2_dev, 0, video, s_stream, 0);
 
 	/* reset stk1160 to default values */
