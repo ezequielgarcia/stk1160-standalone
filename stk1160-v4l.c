@@ -650,10 +650,13 @@ static int vidioc_s_input(struct file *file, void *priv, unsigned int i)
 				0, 0, 0);
 		break;
 	case 3:
+		stk1160_write_reg(dev, STK1160_GCTRL, 0x80);
+		v4l2_device_call_all(&dev->v4l2_dev, 0, video, s_routing,
+				0, 0, 0);
+	case 4:
 		stk1160_write_reg(dev, STK1160_GCTRL, 0x98);
 		v4l2_device_call_all(&dev->v4l2_dev, 0, video, s_routing,
 				svideo_input, 0, 0);
-	case 4:
 		break;
 	}
 
