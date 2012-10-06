@@ -654,6 +654,8 @@ static int vidioc_s_input(struct file *file, void *priv, unsigned int i)
 		v4l2_device_call_all(&dev->v4l2_dev, 0, video, s_routing,
 				0, 0, 0);
 	case 4:
+		stk1160_info("Setting S-Video input %d with s_video_input=%d\n",
+			dev->ctl_input, svideo_input);
 		stk1160_write_reg(dev, STK1160_GCTRL, 0x98);
 		v4l2_device_call_all(&dev->v4l2_dev, 0, video, s_routing,
 				svideo_input, 0, 0);
