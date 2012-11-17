@@ -1,12 +1,15 @@
 stk1160-standalone
 ==================
 
-stk1160 release 0.9.3\_for\_v3.2
+stk1160 release for cross-compilation (RaspberryPi, or any other embedded device)
+
+Please read the Makefile. You will find a few hints and things
+you need to configure before this works.
 
 This driver is specially made for you: the user;
 so anything you think it's not clear enough, please open an github issue.
 
-This branch is intented to be used with v3.2.
+This branch is intended to be used with v3.2.
 __Please don't even try to use it with another one__,
 or if you do and it doesn't work, don't mail me or open an issue.
 
