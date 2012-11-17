@@ -43,9 +43,9 @@ static unsigned int vidioc_debug;
 module_param(vidioc_debug, int, 0644);
 MODULE_PARM_DESC(vidioc_debug, "enable debug messages [vidioc]");
 
-static unsigned int svideo_input;
-module_param(svideo_input, int, 0644);
-MODULE_PARM_DESC(svideo_input, "Set svideo_input [debug only]");
+static bool keep_buffers;
+module_param(keep_buffers, bool, 0644);
+MODULE_PARM_DESC(keep_buffers, "don't release buffers upon stop streaming");
 
 /* supported video standards */
 static struct stk1160_fmt format[] = {
@@ -103,20 +103,23 @@ static void stk1160_set_std(struct stk1160 *dev)
 		stk1160_dbg("registers to NTSC like standard\n");
 		for (i = 0; std525[i].reg != 0xffff; i++)
 			stk1160_write_reg(dev, std525[i].reg, std525[i].val);
-	} else if (dev->norm & V4L2_STD_625_50) {
+	} else {
 		stk1160_dbg("registers to PAL like standard\n");
 		for (i = 0; std625[i].reg != 0xffff; i++)
 			stk1160_write_reg(dev, std625[i].reg, std625[i].val);
-	} else {
-		BUG();
 	}
 
 }
 
-static int stk1160_set_alternate(struct stk1160 *dev)
+/*
+ * Set a new alternate setting.
+ * Returns true is dev->max_pkt_size has changed, false otherwise.
+ */
+static bool stk1160_set_alternate(struct stk1160 *dev)
 {
 	int i, prev_alt = dev->alt;
 	unsigned int min_pkt_size;
+	bool new_pkt_size;
 
 	/*
 	 * If we don't set right alternate,
@@ -138,17 +141,20 @@ static int stk1160_set_alternate(struct stk1160 *dev)
 			dev->alt = i;
 	}
 
-	stk1160_dbg("setting alternate %d\n", dev->alt);
+	stk1160_info("setting alternate %d\n", dev->alt);
 
 	if (dev->alt != prev_alt) {
 		stk1160_dbg("minimum isoc packet size: %u (alt=%d)\n",
 				min_pkt_size, dev->alt);
-		dev->max_pkt_size = dev->alt_max_pkt_size[dev->alt];
 		stk1160_dbg("setting alt %d with wMaxPacketSize=%u\n",
-			       dev->alt, dev->max_pkt_size);
+			       dev->alt, dev->alt_max_pkt_size[dev->alt]);
 		usb_set_interface(dev->udev, 0, dev->alt);
 	}
-	return 0;
+
+	new_pkt_size = dev->max_pkt_size != dev->alt_max_pkt_size[dev->alt];
+	dev->max_pkt_size = dev->alt_max_pkt_size[dev->alt];
+
+	return new_pkt_size;
 }
 
 static bool stk1160_acquire_owner(struct stk1160 *dev, struct file *file)
@@ -175,7 +181,9 @@ static bool stk1160_is_owner(struct stk1160 *dev, struct file *file)
 
 static int stk1160_start_streaming(struct stk1160 *dev)
 {
-	int i, rc;
+	bool new_pkt_size;
+	int rc = 0;
+	int i;
 
 	/* Check device presence */
 	if (!dev->udev)
@@ -186,15 +194,17 @@ static int stk1160_start_streaming(struct stk1160 *dev)
 	 * and only *then* initialize isoc urbs.
 	 * Someone please explain me why ;)
 	 */
-	rc = stk1160_set_alternate(dev);
-	if (rc < 0)
-		return rc;
+	new_pkt_size = stk1160_set_alternate(dev);
 
-	/* If we haven't allocated any isoc urbs */
-	if (!dev->isoc_ctl.num_bufs) {
-		rc = stk1160_init_isoc(dev);
+	/*
+	 * We (re)allocate isoc urbs if:
+	 * there is no allocated isoc urbs, OR
+	 * a new dev->max_pkt_size is detected
+	 */
+	if (!dev->isoc_ctl.num_bufs || new_pkt_size) {
+		rc = stk1160_alloc_isoc(dev);
 		if (rc < 0)
-			return rc;
+			goto out_stop_hw;
 	}
 
 	/* submit urbs and enables IRQ */
@@ -202,8 +212,7 @@ static int stk1160_start_streaming(struct stk1160 *dev)
 		rc = usb_submit_urb(dev->isoc_ctl.urb[i], GFP_KERNEL);
 		if (rc) {
 			stk1160_err("cannot submit urb[%d] (%d)\n", i, rc);
-			stk1160_uninit_isoc(dev);
-			return rc;
+			goto out_uninit;
 		}
 	}
 
@@ -217,44 +226,53 @@ static int stk1160_start_streaming(struct stk1160 *dev)
 	stk1160_dbg("streaming started\n");
 
 	return 0;
+
+out_uninit:
+	stk1160_uninit_isoc(dev);
+out_stop_hw:
+	usb_set_interface(dev->udev, 0, 0);
+	stk1160_clear_queue(dev);
+
+	return rc;
 }
 
-int stk1160_stop_streaming(struct stk1160 *dev, bool connected)
+/* Must be called with v4l_lock hold */
+static void stk1160_stop_hw(struct stk1160 *dev)
 {
-	struct stk1160_buffer *buf;
-	unsigned long flags = 0;
+	/* If the device is not physically present, there is nothing to do */
+	if (!dev->udev)
+		return;
 
-	stk1160_uninit_isoc(dev);
+	/* set alternate 0 */
+	dev->alt = 0;
+	stk1160_info("setting alternate %d\n", dev->alt);
+	usb_set_interface(dev->udev, 0, 0);
 
-	/* If the device is physically plugged */
-	if (connected && dev->udev) {
+	/* Stop stk1160 */
+	stk1160_write_reg(dev, STK1160_DCTRL, 0x00);
+	stk1160_write_reg(dev, STK1160_DCTRL+3, 0x00);
 
-		/* set alternate 0 */
-		dev->alt = 0;
-		stk1160_info("setting alternate %d\n", dev->alt);
-		usb_set_interface(dev->udev, 0, 0);
+	/* Stop saa711x */
+	v4l2_device_call_all(&dev->v4l2_dev, 0, video, s_stream, 0);
+}
 
-		/* Stop stk1160 */
-		stk1160_write_reg(dev, STK1160_DCTRL, 0x00);
-		stk1160_write_reg(dev, STK1160_DCTRL+3, 0x00);
+static int stk1160_stop_streaming(struct stk1160 *dev)
+{
+	stk1160_cancel_isoc(dev);
 
-		/* Stop saa711x */
-		v4l2_device_call_all(&dev->v4l2_dev, 0, video, s_stream, 0);
-	}
+	/*
+	 * It is possible to keep buffers around using a module parameter.
+	 * This is intended to avoid memory fragmentation.
+	 */
+	if (!keep_buffers)
+		stk1160_free_isoc(dev);
 
-	/* Release all active buffers */
-	spin_lock_irqsave(&dev->buf_lock, flags);
-	while (!list_empty(&dev->avail_bufs)) {
-		buf = list_first_entry(&dev->avail_bufs,
-			struct stk1160_buffer, list);
-		list_del(&buf->list);
-		vb2_buffer_done(&buf->vb, VB2_BUF_STATE_ERROR);
-		stk1160_info("buffer [%p/%d] aborted\n",
-				buf, buf->vb.v4l2_buf.index);
-	}
-	spin_unlock_irqrestore(&dev->buf_lock, flags);
+	stk1160_stop_hw(dev);
+
+	stk1160_clear_queue(dev);
 
 	stk1160_dbg("streaming stopped\n");
+
 	return 0;
 }
 
@@ -472,12 +490,6 @@ static int vidioc_try_fmt_vid_cap(struct file *file, void *priv,
 {
 	struct stk1160 *dev = video_drvdata(file);
 
-	if (f->fmt.pix.pixelformat != format[0].fourcc) {
-		stk1160_err("fourcc format 0x%08x invalid\n",
-			f->fmt.pix.pixelformat);
-		return -EINVAL;
-	}
-
 	/*
 	 * User can't choose size at his own will,
 	 * so we just return him the current size chosen
@@ -485,6 +497,7 @@ static int vidioc_try_fmt_vid_cap(struct file *file, void *priv,
 	 * TODO: Implement frame scaling?
 	 */
 
+	f->fmt.pix.pixelformat = dev->fmt->fourcc;
 	f->fmt.pix.width = dev->width;
 	f->fmt.pix.height = dev->height;
 	f->fmt.pix.field = V4L2_FIELD_INTERLACED;
@@ -572,7 +585,7 @@ static int vidioc_s_std(struct file *file, void *priv, v4l2_std_id *norm)
 	return 0;
 }
 
-/* FIXME: Extend support for other inputs */
+
 static int vidioc_enum_input(struct file *file, void *priv,
 				struct v4l2_input *i)
 {
@@ -582,7 +595,7 @@ static int vidioc_enum_input(struct file *file, void *priv,
 		return -EINVAL;
 
 	/* S-Video special handling */
-	if (i->index == 4)
+	if (i->index == STK1160_SVIDEO_INPUT)
 		sprintf(i->name, "S-Video");
 	else
 		sprintf(i->name, "Composite%d", i->index);
@@ -611,72 +624,9 @@ static int vidioc_s_input(struct file *file, void *priv, unsigned int i)
 
 	dev->ctl_input = i;
 
-	/*
-	 * saa7115 is the in charge of video decoding.
-	 * In order to switch input from Composite to S-Video,
-	 * it's necessary to call s_routing with appropriate input
-	 * index.
-	 * For composite, use SAA7115_COMPOSITE0 (defined as zero).
-	 * However, I'm not sure which of these is the correct one
-	 * for S-Video: (these are defined at saa7155.h)
-	 *
-	 * #define SAA7115_COMPOSITE0 0
-	 * #define SAA7115_COMPOSITE1 1
-	 * #define SAA7115_COMPOSITE2 2
-	 * #define SAA7115_COMPOSITE3 3
-	 * #define SAA7115_COMPOSITE4 4
-	 * #define SAA7115_COMPOSITE5 5
-	 * #define SAA7115_SVIDEO0    6
-	 * #define SAA7115_SVIDEO1    7
-	 * #define SAA7115_SVIDEO2    8
-	 * #define SAA7115_SVIDEO3    9
-	 *
-	 * Andrew Schalk reported it's COMPOSITE1 (svideo_input=1)
-	 */
-	switch (dev->ctl_input) {
-	case 0:
-		stk1160_write_reg(dev, STK1160_GCTRL, 0x98);
-		v4l2_device_call_all(&dev->v4l2_dev, 0, video, s_routing,
-				0, 0, 0);
-		break;
-	case 1:
-		stk1160_write_reg(dev, STK1160_GCTRL, 0x90);
-		v4l2_device_call_all(&dev->v4l2_dev, 0, video, s_routing,
-				0, 0, 0);
-		break;
-	case 2:
-		stk1160_write_reg(dev, STK1160_GCTRL, 0x88);
-		v4l2_device_call_all(&dev->v4l2_dev, 0, video, s_routing,
-				0, 0, 0);
-		break;
-	case 3:
-		stk1160_write_reg(dev, STK1160_GCTRL, 0x80);
-		v4l2_device_call_all(&dev->v4l2_dev, 0, video, s_routing,
-				0, 0, 0);
-	case 4:
-		stk1160_info("Setting S-Video input %d with s_video_input=%d\n",
-			dev->ctl_input, svideo_input);
-		stk1160_write_reg(dev, STK1160_GCTRL, 0x98);
-		v4l2_device_call_all(&dev->v4l2_dev, 0, video, s_routing,
-				svideo_input, 0, 0);
-		break;
-	}
+	stk1160_select_input(dev);
 
 	return 0;
-}
-
-static int vidioc_enum_framesizes(struct file *file, void *fh,
-				 struct v4l2_frmsizeenum *fsize)
-{
-	/* TODO: Is this needed? */
-	return -EINVAL;
-}
-
-static int vidioc_enum_frameintervals(struct file *file, void *fh,
-				  struct v4l2_frmivalenum *fival)
-{
-	/* TODO: Is this needed? */
-	return -EINVAL;
 }
 
 static int vidioc_g_chip_ident(struct file *file, void *priv,
@@ -761,8 +711,6 @@ static const struct v4l2_ioctl_ops stk1160_ioctl_ops = {
 	.vidioc_enum_input    = vidioc_enum_input,
 	.vidioc_g_input       = vidioc_g_input,
 	.vidioc_s_input       = vidioc_s_input,
-	.vidioc_enum_framesizes = vidioc_enum_framesizes,
-	.vidioc_enum_frameintervals = vidioc_enum_frameintervals,
 
 	/* vb2 takes care of these */
 	.vidioc_reqbufs       = vidioc_reqbufs,
@@ -815,7 +763,7 @@ static int queue_setup(struct vb2_queue *vq, const struct v4l2_format *v4l_fmt,
 
 static void buffer_queue(struct vb2_buffer *vb)
 {
-	unsigned long flags = 0;
+	unsigned long flags;
 	struct stk1160 *dev = vb2_get_drv_priv(vb->vb2_queue);
 	struct stk1160_buffer *buf =
 		container_of(vb, struct stk1160_buffer, vb);
@@ -835,10 +783,10 @@ static void buffer_queue(struct vb2_buffer *vb)
 		buf->pos = 0;
 
 		/*
-		 * If buffer length is different from expected then we return
+		 * If buffer length is less from expected then we return
 		 * the buffer to userspace directly.
 		 */
-		if (buf->length != dev->width * dev->height * 2)
+		if (buf->length < dev->width * dev->height * 2)
 			vb2_buffer_done(&buf->vb, VB2_BUF_STATE_ERROR);
 		else
 			list_add_tail(&buf->list, &dev->avail_bufs);
@@ -850,22 +798,14 @@ static void buffer_queue(struct vb2_buffer *vb)
 static int start_streaming(struct vb2_queue *vq, unsigned int count)
 {
 	struct stk1160 *dev = vb2_get_drv_priv(vq);
-	int rc;
-
-	rc = stk1160_start_streaming(dev);
-
-	return rc;
+	return stk1160_start_streaming(dev);
 }
 
 /* abort streaming and wait for last buffer */
 static int stop_streaming(struct vb2_queue *vq)
 {
 	struct stk1160 *dev = vb2_get_drv_priv(vq);
-	int rc;
-
-	rc = stk1160_stop_streaming(dev, true);
-
-	return rc;
+	return stk1160_stop_streaming(dev);
 }
 
 static void stk1160_lock(struct vb2_queue *vq)
@@ -899,13 +839,33 @@ static struct video_device v4l_template = {
 
 /********************************************************************/
 
+/* Must be called with both v4l_lock and vb_queue_lock hold */
+void stk1160_clear_queue(struct stk1160 *dev)
+{
+	struct stk1160_buffer *buf;
+	unsigned long flags;
+
+	/* Release all active buffers */
+	spin_lock_irqsave(&dev->buf_lock, flags);
+	while (!list_empty(&dev->avail_bufs)) {
+		buf = list_first_entry(&dev->avail_bufs,
+			struct stk1160_buffer, list);
+		list_del(&buf->list);
+		vb2_buffer_done(&buf->vb, VB2_BUF_STATE_ERROR);
+		stk1160_info("buffer [%p/%d] aborted\n",
+				buf, buf->vb.v4l2_buf.index);
+	}
+	/* It's important to clear current buffer */
+	dev->isoc_ctl.buf = NULL;
+	spin_unlock_irqrestore(&dev->buf_lock, flags);
+}
+
 int stk1160_vb2_setup(struct stk1160 *dev)
 {
 	int rc;
 	struct vb2_queue *q;
 
 	q = &dev->vb_vidq;
-	memset(q, 0, sizeof(dev->vb_vidq));
 	q->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
 	q->io_modes = VB2_READ | VB2_MMAP | VB2_USERPTR;
 	q->drv_priv = dev;
@@ -949,8 +909,6 @@ int stk1160_video_register(struct stk1160 *dev)
 	/* set default format */
 	dev->fmt = &format[0];
 	stk1160_set_std(dev);
-
-	stk1160_ac97_register(dev);
 
 	v4l2_device_call_all(&dev->v4l2_dev, 0, core, s_std,
 			dev->norm);

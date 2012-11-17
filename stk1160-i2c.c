@@ -37,11 +37,33 @@ do {								\
 		printk(KERN_DEBUG fmt, ##args);			\
 } while (0)
 
+static int stk1160_i2c_busy_wait(struct stk1160 *dev, u8 wait_bit_mask)
+{
+	unsigned long end;
+	u8 flag;
+
+	/* Wait until read/write finish bit is set */
+	end = jiffies + msecs_to_jiffies(STK1160_I2C_TIMEOUT);
+	while (time_is_after_jiffies(end)) {
+
+		stk1160_read_reg(dev, STK1160_SICTL+1, &flag);
+		/* read/write done? */
+		if (flag & wait_bit_mask)
+			goto done;
+
+		usleep_range(10 * USEC_PER_MSEC, 20 * USEC_PER_MSEC);
+	}
+
+	return -ETIMEDOUT;
+
+done:
+	return 0;
+}
+
 static int stk1160_i2c_write_reg(struct stk1160 *dev, u8 addr,
 		u8 reg, u8 value)
 {
-	int rc, timeout;
-	u8 flag;
+	int rc;
 
 	/* Set serial device address */
 	rc = stk1160_write_reg(dev, STK1160_SICTL_SDA, addr);
@@ -63,20 +85,9 @@ static int stk1160_i2c_write_reg(struct stk1160 *dev, u8 addr,
 	if (rc < 0)
 		return rc;
 
-	/* Wait until Write Finish bit is set */
-	for (timeout = 100; timeout > 0;
-	     timeout -= 20) {
-		stk1160_read_reg(dev, STK1160_SICTL+1, &flag);
-		/* write done? */
-		if (flag & 0x04)
-			break;
-
-		msleep(20);
-	}
-
-	if (timeout == 0)
-		/* return EBUSY, or EFAULT, or what ? */
-		return -EIO;
+	rc = stk1160_i2c_busy_wait(dev, 0x04);
+	if (rc < 0)
+		return rc;
 
 	return 0;
 }
@@ -84,8 +95,7 @@ static int stk1160_i2c_write_reg(struct stk1160 *dev, u8 addr,
 static int stk1160_i2c_read_reg(struct stk1160 *dev, u8 addr,
 		u8 reg, u8 *value)
 {
-	int rc, timeout;
-	u8 flag;
+	int rc;
 
 	/* Set serial device address */
 	rc = stk1160_write_reg(dev, STK1160_SICTL_SDA, addr);
@@ -102,22 +112,11 @@ static int stk1160_i2c_read_reg(struct stk1160 *dev, u8 addr,
 	if (rc < 0)
 		return rc;
 
-	/* Wait until Read Finish bit is set */
-	for (timeout = 100; timeout > 0;
-	     timeout -= 20) {
-		stk1160_read_reg(dev, STK1160_SICTL+1, &flag);
-		/* read done? */
-		if (flag & 0x01)
-			break;
+	rc = stk1160_i2c_busy_wait(dev, 0x01);
+	if (rc < 0)
+		return rc;
 
-		msleep(20);
-	}
-
-	if (timeout == 0)
-		/* return EBUSY, or EFAULT, or what ? */
-		return -EIO;
-
-	stk1160_read_reg(dev, STK1160_SBUSR_RD, value);
+	rc = stk1160_read_reg(dev, STK1160_SBUSR_RD, value);
 	if (rc < 0)
 		return rc;
 
@@ -131,8 +130,7 @@ static int stk1160_i2c_read_reg(struct stk1160 *dev, u8 addr,
 static int stk1160_i2c_check_for_device(struct stk1160 *dev,
 		unsigned char addr)
 {
-	int rc, write_timeout;
-	u8 flag;
+	int rc;
 
 	/* Set serial device address */
 	rc = stk1160_write_reg(dev, STK1160_SICTL_SDA, addr);
@@ -149,17 +147,11 @@ static int stk1160_i2c_check_for_device(struct stk1160 *dev,
 	if (rc < 0)
 		return rc;
 
-	/* Wait until Read Finish bit is set */
-	for (write_timeout = 40; write_timeout > 0;
-	     write_timeout -= 20) {
-		stk1160_read_reg(dev, STK1160_SICTL+1, &flag);
-		if (flag & 0x01)
-			return 0;
+	rc = stk1160_i2c_busy_wait(dev, 0x01);
+	if (rc < 0)
+		return -ENODEV;
 
-		msleep(20);
-	}
-
-	return -ENODEV;
+	return 0;
 }
 
 /*

@@ -337,22 +337,50 @@ static void stk1160_isoc_irq(struct urb *urb)
 }
 
 /*
- * Deallocate URBs
+ * Cancel urbs
  * This function can't be called in atomic context
  */
-void stk1160_uninit_isoc(struct stk1160 *dev)
+void stk1160_cancel_isoc(struct stk1160 *dev)
+{
+	int i, num_bufs = dev->isoc_ctl.num_bufs;
+
+	/*
+	 * This check is not necessary, but we add it
+	 * to avoid a spurious debug message
+	 */
+	if (!num_bufs)
+		return;
+
+	stk1160_dbg("killing %d urbs...\n", num_bufs);
+
+	for (i = 0; i < num_bufs; i++) {
+
+		/*
+		 * To kill urbs we can't be in atomic context.
+		 * We don't care for NULL pointer since
+		 * usb_kill_urb allows it.
+		 */
+		usb_kill_urb(dev->isoc_ctl.urb[i]);
+	}
+
+	stk1160_dbg("all urbs killed\n");
+}
+
+/*
+ * Releases urb and transfer buffers
+ * Obviusly, associated urb must be killed before releasing it.
+ */
+void stk1160_free_isoc(struct stk1160 *dev)
 {
 	struct urb *urb;
-	int i;
+	int i, num_bufs = dev->isoc_ctl.num_bufs;
 
-	stk1160_dbg("killing urbs...\n");
+	stk1160_dbg("freeing %d urb buffers...\n", num_bufs);
 
-	for (i = 0; i < dev->isoc_ctl.num_bufs; i++) {
+	for (i = 0; i < num_bufs; i++) {
 
 		urb = dev->isoc_ctl.urb[i];
 		if (urb) {
-			/* To kill urbs we can't be in atomic context */
-			usb_kill_urb(urb);
 
 			if (dev->isoc_ctl.transfer_buffer[i]) {
 #ifndef CONFIG_DMA_NONCOHERENT
@@ -377,16 +405,36 @@ void stk1160_uninit_isoc(struct stk1160 *dev)
 	dev->isoc_ctl.transfer_buffer = NULL;
 	dev->isoc_ctl.num_bufs = 0;
 
-	stk1160_dbg("all urbs killed\n");
+	stk1160_dbg("all urb buffers freed\n");
+}
+
+/*
+ * Helper for cancelling and freeing urbs
+ * This function can't be called in atomic context
+ */
+void stk1160_uninit_isoc(struct stk1160 *dev)
+{
+	stk1160_cancel_isoc(dev);
+	stk1160_free_isoc(dev);
 }
 
 /*
  * Allocate URBs
  */
-int stk1160_init_isoc(struct stk1160 *dev)
+int stk1160_alloc_isoc(struct stk1160 *dev)
 {
 	struct urb *urb;
 	int i, j, k, sb_size, max_packets, num_bufs;
+
+	/*
+	 * It may be necessary to release isoc here,
+	 * since isoc are only released on disconnection.
+	 * (see new_pkt_size flag)
+	 */
+	if (dev->isoc_ctl.num_bufs)
+		stk1160_uninit_isoc(dev);
+
+	stk1160_dbg("allocating urbs...\n");
 
 	num_bufs = STK1160_NUM_BUFS;
 	max_packets = STK1160_NUM_PACKETS;
@@ -414,8 +462,7 @@ int stk1160_init_isoc(struct stk1160 *dev)
 		urb = usb_alloc_urb(max_packets, GFP_KERNEL);
 		if (!urb) {
 			stk1160_err("cannot alloc urb[%d]\n", i);
-			stk1160_uninit_isoc(dev);
-			return -ENOMEM;
+			goto free_i_bufs;
 		}
 		dev->isoc_ctl.urb[i] = urb;
 
@@ -426,10 +473,13 @@ int stk1160_init_isoc(struct stk1160 *dev)
 		dev->isoc_ctl.transfer_buffer[i] = kmalloc(sb_size, GFP_KERNEL);
 #endif
 		if (!dev->isoc_ctl.transfer_buffer[i]) {
-			stk1160_err("cannot alloc %d bytes for tx buffer\n",
-				sb_size);
-			stk1160_uninit_isoc(dev);
-			return -ENOMEM;
+			stk1160_err("cannot alloc %d bytes for tx[%d] buffer\n",
+				sb_size, i);
+
+			/* Not enough transfer buffers, so just give up */
+			if (i < STK1160_MIN_BUFS)
+				goto free_i_bufs;
+			goto nomore_tx_bufs;
 		}
 		memset(dev->isoc_ctl.transfer_buffer[i], 0, sb_size);
 
@@ -442,7 +492,7 @@ int stk1160_init_isoc(struct stk1160 *dev)
 		urb->transfer_buffer_length = sb_size;
 		urb->complete = stk1160_isoc_irq;
 		urb->context = dev;
-		urb->interval = 1;
+		urb->interval = 10;
 		urb->start_frame = 0;
 		urb->number_of_packets = max_packets;
 #ifndef CONFIG_DMA_NONCOHERENT
@@ -460,9 +510,32 @@ int stk1160_init_isoc(struct stk1160 *dev)
 		}
 	}
 
+	stk1160_dbg("%d urbs allocated\n", num_bufs);
+
 	/* At last we can say we have some buffers */
 	dev->isoc_ctl.num_bufs = num_bufs;
 
 	return 0;
+
+nomore_tx_bufs:
+	/*
+	 * Failed to allocate desired buffer count. However, we may have
+	 * enough to work fine, so we just free the extra urb,
+	 * store the allocated count and keep going, fingers crossed!
+	 */
+	usb_free_urb(dev->isoc_ctl.urb[i]);
+	dev->isoc_ctl.urb[i] = NULL;
+
+	stk1160_warn("%d urbs allocated. Trying to continue...\n", i-1);
+
+	dev->isoc_ctl.num_bufs = i-1;
+
+	return 0;
+
+free_i_bufs:
+	/* Save the allocated buffers so far, so we can properly free them */
+	dev->isoc_ctl.num_bufs = i+1;
+	stk1160_free_isoc(dev);
+	return -ENOMEM;
 }
 

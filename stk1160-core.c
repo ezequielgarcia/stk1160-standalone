@@ -19,11 +19,9 @@
  * GNU General Public License for more details.
  *
  * TODO:
- * Should I dealloc buffers when stop or only on disconnect?
- * See em28xx patch about memory fragmentation.
- * (Perhaps allow a parameter to control this)
  *
- * How about framesize and frameinterval v4l2 ioctl?
+ * 1. (Try to) detect if we must register ac97 mixer
+ * 2. Support stream at lower speed: lower frame rate or lower frame size.
  *
  */
 
@@ -68,16 +66,12 @@ static unsigned short saa7113_addrs[] = {
 int stk1160_read_reg(struct stk1160 *dev, u16 reg, u8 *value)
 {
 	int ret;
+	int pipe = usb_rcvctrlpipe(dev->udev, 0);
 
 	*value = 0;
-	ret = usb_control_msg(dev->udev, usb_rcvctrlpipe(dev->udev, 0),
-			0x00,
+	ret = usb_control_msg(dev->udev, pipe, 0x00,
 			USB_DIR_IN | USB_TYPE_VENDOR | USB_RECIP_DEVICE,
-			0x00,
-			reg,
-			value,
-			sizeof(u8),
-			HZ);
+			0x00, reg, value, sizeof(u8), HZ);
 	if (ret < 0) {
 		stk1160_err("read failed on reg 0x%x (%d)\n",
 			reg, ret);
@@ -90,15 +84,11 @@ int stk1160_read_reg(struct stk1160 *dev, u16 reg, u8 *value)
 int stk1160_write_reg(struct stk1160 *dev, u16 reg, u16 value)
 {
 	int ret;
+	int pipe = usb_sndctrlpipe(dev->udev, 0);
 
-	ret =  usb_control_msg(dev->udev, usb_sndctrlpipe(dev->udev, 0),
-			0x01,
+	ret =  usb_control_msg(dev->udev, pipe, 0x01,
 			USB_DIR_OUT | USB_TYPE_VENDOR | USB_RECIP_DEVICE,
-			value,
-			reg,
-			NULL,
-			0,
-			HZ);
+			value, reg, NULL, 0, HZ);
 	if (ret < 0) {
 		stk1160_err("write failed on reg 0x%x (%d)\n",
 			reg, ret);
@@ -108,12 +98,31 @@ int stk1160_write_reg(struct stk1160 *dev, u16 reg, u16 value)
 	return 0;
 }
 
+void stk1160_select_input(struct stk1160 *dev)
+{
+	int route;
+	static const u8 gctrl[] = {
+		0x98, 0x90, 0x88, 0x80, 0x98
+	};
+
+	if (dev->ctl_input == STK1160_SVIDEO_INPUT)
+		route = SAA7115_SVIDEO3;
+	else
+		route = SAA7115_COMPOSITE0;
+
+	if (dev->ctl_input < ARRAY_SIZE(gctrl)) {
+		v4l2_device_call_all(&dev->v4l2_dev, 0, video, s_routing,
+				route, 0, 0);
+		stk1160_write_reg(dev, STK1160_GCTRL, gctrl[dev->ctl_input]);
+	}
+}
+
 /* TODO: We should break this into pieces */
 static void stk1160_reg_reset(struct stk1160 *dev)
 {
 	int i;
 
-	static struct regval ctl[] = {
+	static const struct regval ctl[] = {
 		{STK1160_GCTRL+2, 0x0078},
 
 		{STK1160_RMCTL+1, 0x0000},
@@ -139,22 +148,6 @@ static void stk1160_reg_reset(struct stk1160 *dev)
 
 	for (i = 0; ctl[i].reg != 0xffff; i++)
 		stk1160_write_reg(dev, ctl[i].reg, ctl[i].val);
-
-	/* Set selected input from module parameter */
-	switch (dev->ctl_input) {
-	case 0:
-		stk1160_write_reg(dev, STK1160_GCTRL, 0x98);
-		break;
-	case 1:
-		stk1160_write_reg(dev, STK1160_GCTRL, 0x90);
-		break;
-	case 2:
-		stk1160_write_reg(dev, STK1160_GCTRL, 0x88);
-		break;
-	case 3:
-		stk1160_write_reg(dev, STK1160_GCTRL, 0x80);
-		break;
-	}
 }
 
 static void stk1160_release(struct v4l2_device *v4l2_dev)
@@ -186,7 +179,7 @@ static int stk1160_scan_usb(struct usb_interface *intf, struct usb_device *udev,
 	const struct usb_endpoint_descriptor *desc;
 
 	bool has_video = false, has_audio = false;
-	char *speed;
+	const char *speed;
 
 	ifnum = intf->altsetting[0].desc.bInterfaceNumber;
 
@@ -228,7 +221,6 @@ static int stk1160_scan_usb(struct usb_interface *intf, struct usb_device *udev,
 	case USB_SPEED_LOW:
 		speed = "1.5";
 		break;
-	case USB_SPEED_UNKNOWN:
 	case USB_SPEED_FULL:
 		speed = "12";
 		break;
@@ -263,10 +255,9 @@ static int stk1160_scan_usb(struct usb_interface *intf, struct usb_device *udev,
 	 * video stream wouldn't likely work, since 12 Mbps is generally
 	 * not enough even for most streams.
 	 */
-	if (udev->speed != USB_SPEED_HIGH) {
-		dev_err(&udev->dev, "must be connected to a high-speed USB 2.0 port\n");
-		return -ENODEV;
-	}
+	if (udev->speed != USB_SPEED_HIGH)
+		dev_warn(&udev->dev, "must be connected to a high-speed USB 2.0 port\n\
+				You may not be able to stream video smoothly\n");
 
 	return 0;
 }
@@ -274,14 +265,12 @@ static int stk1160_scan_usb(struct usb_interface *intf, struct usb_device *udev,
 static int stk1160_probe(struct usb_interface *interface,
 		const struct usb_device_id *id)
 {
-	int ifnum;
 	int rc = 0;
 
 	unsigned int *alt_max_pkt_size;	/* array of wMaxPacketSize */
 	struct usb_device *udev;
 	struct stk1160 *dev;
 
-	ifnum = interface->altsetting[0].desc.bInterfaceNumber;
 	udev = interface_to_usbdev(interface);
 
 	/*
@@ -370,13 +359,15 @@ static int stk1160_probe(struct usb_interface *interface,
 
 	/* i2c reset saa711x */
 	v4l2_device_call_all(&dev->v4l2_dev, 0, core, reset, 0);
-
-	v4l2_device_call_all(&dev->v4l2_dev, 0, video, s_routing,
-				0, 0, 0);
 	v4l2_device_call_all(&dev->v4l2_dev, 0, video, s_stream, 0);
 
 	/* reset stk1160 to default values */
 	stk1160_reg_reset(dev);
+
+	/* select default input */
+	stk1160_select_input(dev);
+
+	stk1160_ac97_register(dev);
 
 	rc = stk1160_video_register(dev);
 	if (rc < 0)
@@ -413,10 +404,14 @@ static void stk1160_disconnect(struct usb_interface *interface)
 	 */
 	mutex_lock(&dev->v4l_lock);
 
+	/* Here is the only place where isoc get released */
+	stk1160_uninit_isoc(dev);
+
 	/* ac97 unregister needs to be done before usb_device is cleared */
 	stk1160_ac97_unregister(dev);
 
-	stk1160_stop_streaming(dev, false);
+	stk1160_clear_queue(dev);
+
 	video_unregister_device(&dev->vdev);
 	v4l2_device_disconnect(&dev->v4l2_dev);
 

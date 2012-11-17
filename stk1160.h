@@ -27,14 +27,15 @@
 #include <media/v4l2-device.h>
 #include <media/v4l2-ctrls.h>
 
-#define STK1160_VERSION		"0.9.3"
-#define STK1160_VERSION_NUM	0x000903
+#define STK1160_VERSION		"0.9.5"
+#define STK1160_VERSION_NUM	0x000905
 
-/* TODO: Decide on number of packets for each buffer */
+/* Decide on number of packets for each buffer */
 #define STK1160_NUM_PACKETS 64
 
 /* Number of buffers for isoc transfers */
-#define STK1160_NUM_BUFS 16 /* TODO */
+#define STK1160_NUM_BUFS 16
+#define STK1160_MIN_BUFS 1
 
 /* TODO: This endpoint address should be retrieved */
 #define STK1160_EP_VIDEO 0x82
@@ -47,6 +48,9 @@
 #define STK1160_MIN_PKT_SIZE 3072
 
 #define STK1160_MAX_INPUT 4
+#define STK1160_SVIDEO_INPUT 4
+
+#define STK1160_I2C_TIMEOUT 100
 
 /* TODO: Print helpers
  * I could use dev_xxx, pr_xxx, v4l2_xxx or printk.
@@ -170,28 +174,36 @@ struct regval {
 };
 
 /* Provided by stk1160-v4l.c */
-int stk1160_vb2_setup(struct stk1160 *cap);
-int stk1160_video_register(struct stk1160 *cap);
-void stk1160_video_unregister(struct stk1160 *cap);
-int stk1160_stop_streaming(struct stk1160 *cap, bool connected);
+int stk1160_vb2_setup(struct stk1160 *dev);
+int stk1160_video_register(struct stk1160 *dev);
+void stk1160_video_unregister(struct stk1160 *dev);
+void stk1160_clear_queue(struct stk1160 *dev);
 
 /* Provided by stk1160-video.c */
-void stk1160_uninit_isoc(struct stk1160 *cap);
-int stk1160_init_isoc(struct stk1160 *cap);
+int stk1160_alloc_isoc(struct stk1160 *dev);
+void stk1160_free_isoc(struct stk1160 *dev);
+void stk1160_cancel_isoc(struct stk1160 *dev);
+void stk1160_uninit_isoc(struct stk1160 *dev);
 
 /* Provided by stk1160-i2c.c */
-int stk1160_i2c_register(struct stk1160 *cap);
-int stk1160_i2c_unregister(struct stk1160 *cap);
+int stk1160_i2c_register(struct stk1160 *dev);
+int stk1160_i2c_unregister(struct stk1160 *dev);
 
 /* Provided by stk1160-core.c */
-int stk1160_read_reg(struct stk1160 *cap, u16 reg, u8 *value);
-int stk1160_write_reg(struct stk1160 *cap, u16 reg, u16 value);
+int stk1160_read_reg(struct stk1160 *dev, u16 reg, u8 *value);
+int stk1160_write_reg(struct stk1160 *dev, u16 reg, u16 value);
 int stk1160_write_regs_req(struct stk1160 *dev, u8 req, u16 reg,
 		char *buf, int len);
 int stk1160_read_reg_req_len(struct stk1160 *dev, u8 req, u16 reg,
 		char *buf, int len);
+void stk1160_select_input(struct stk1160 *dev);
 
 /* Provided by stk1160-ac97.c */
+#ifdef CONFIG_VIDEO_STK1160_AC97
 int stk1160_ac97_register(struct stk1160 *dev);
 int stk1160_ac97_unregister(struct stk1160 *dev);
+#else
+static inline int stk1160_ac97_register(struct stk1160 *dev) { return 0; }
+static inline int stk1160_ac97_unregister(struct stk1160 *dev) { return 0; }
+#endif
 
