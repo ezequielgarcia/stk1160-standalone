@@ -1,3 +1,18 @@
+IMPORTANT
+=========
+
+    Somewhat deprecated, this driver is.
+                                (Yoda)
+
+I'm pleased to announce that stk1160 is fully mainlined since Linux v3.7.
+
+The driver you are looking at is for Linux v3.2 **only**.
+
+This version works fine. If you find any problems, keep in
+mind this version is no longer under maintainance.
+
+Please use a recent kernel (>= v3.7) whenever possible.
+
 stk1160-standalone
 ==================
 
