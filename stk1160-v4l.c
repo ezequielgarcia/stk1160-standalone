@@ -568,6 +568,8 @@ static int vidioc_s_std(struct file *file, void *priv, v4l2_std_id *norm)
 {
 	struct stk1160 *dev = video_drvdata(file);
 	struct vb2_queue *q = &dev->vb_vidq;
+	int status = 0;
+	v4l2_std_id std = 0;
 
 	if (!stk1160_acquire_owner(dev, file))
 		return -EBUSY;
@@ -595,6 +597,11 @@ static int vidioc_s_std(struct file *file, void *priv, v4l2_std_id *norm)
 		stk1160_err("invalid standard\n");
 		return -EINVAL;
 	}
+
+	v4l2_device_call_all(&dev->v4l2_dev, 0, video, querystd, &std);
+	v4l2_device_call_all(&dev->v4l2_dev, 0, video, g_input_status, &status);
+	pr_info("stk1160: decoder input status %d\n", status);
+	pr_info("stk1160: decoder detected standard %llu\n", std);
 
 	stk1160_set_std(dev);
 
