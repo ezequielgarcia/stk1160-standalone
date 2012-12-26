@@ -240,6 +240,7 @@ static int stk1160_start_streaming(struct stk1160 *dev)
 	}
 
 	/* Start saa711x */
+	v4l2_device_call_all(&dev->v4l2_dev, 0, core, log_status);
 	v4l2_device_call_all(&dev->v4l2_dev, 0, video, s_stream, 1);
 
 	/* Start stk1160 */
@@ -602,6 +603,7 @@ static int vidioc_s_std(struct file *file, void *priv, v4l2_std_id *norm)
 	v4l2_device_call_all(&dev->v4l2_dev, 0, video, g_input_status, &status);
 	pr_info("stk1160: decoder input status %d\n", status);
 	pr_info("stk1160: decoder detected standard %llu\n", std);
+	v4l2_device_call_all(&dev->v4l2_dev, 0, core, log_status);
 
 	stk1160_set_std(dev);
 
