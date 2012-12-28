@@ -243,6 +243,7 @@ static void stk1160_process_isoc(struct stk1160 *dev, struct urb *urb)
 		return;
 	}
 
+	printk_ratelimited(KERN_INFO "-- URB: %d packets\n", urb->number_of_packets);
 	for (i = 0; i < urb->number_of_packets; i++) {
 		status = urb->iso_frame_desc[i].status;
 		if (status < 0) {
@@ -258,6 +259,7 @@ static void stk1160_process_isoc(struct stk1160 *dev, struct urb *urb)
 		if (len <= 4)
 			continue;
 
+		printk_ratelimited(KERN_INFO "-- packet %d: %d bytes\n", i, len);
 		/*
 		 * An 8-byte packet sequence means end of field.
 		 * So if we don't have any packet, we start receiving one now
@@ -323,6 +325,7 @@ static void stk1160_isoc_irq(struct urb *urb)
 		return;
 	}
 
+	printk_ratelimited(KERN_INFO "-- USB IRQ\n");
 	stk1160_process_isoc(dev, urb);
 
 	/* Reset urb buffers */
