@@ -1,33 +1,32 @@
-IMPORTANT
-=========
+IMPORTANT UPDATE
+================
 
-    Somewhat deprecated, this driver is.
+    Completely deprecated, this driver is.
                                 (Yoda)
 
-I'm pleased to announce that stk1160 is fully mainlined since Linux v3.7.
-
 The driver you are looking at is for Linux v3.2 **only**.
+It will **not** work on any other kernel version. Please don't even
+try unless you really know what you're doing.
 
-This version works fine. If you find any problems, keep in
-mind this version is no longer under maintainance.
+Given stk1160 is fully mainlined since Linux v3.7 I've disabled issue tracking
+for this github repository. If you have questions or want to report a bug
+please use the video4linux mailing list (linux-media@vger.kernel.org) or
+try asking in the IRC channel (#v4l).
 
-Please use a recent kernel (>= v3.7) whenever possible.
+If you want to stay updated with news about easycap devices you can
+read the most excellent blog from Andrew Schalk.
+
+  http://easycap.blogspot.com.ar/
+  
+I hope you enjoy using stk1160 as much as I've enjoyed writing it!
 
 stk1160-standalone
 ==================
 
 stk1160 release 0.9.3\_for\_v3.2
 
-This driver is specially made for you: the user;
-so anything you think it's not clear enough, please open a github issue.
-
-I repeat: *open a github issue*. 
-This way everyone can follow the bug.
-__Mails will be discarded__.
-
-This branch is intented to be used with v3.2.
-__Please don't even try to use it with another one__,
-or if you do and it doesn't work, don't open an issue.
+This branch is intended to be used with v3.2.
+__Please don't even try to use it with another one__.
 
 This is the stk1160 driver (formerly known as easycap driver).
 It's the driver needed to capture audio and video in some of those
