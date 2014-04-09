@@ -80,3 +80,4 @@ On many distributions this can be done like this:
 
 This way easycap won't be loaded automatically by udev;
 you can still load it manually, of course.
+
